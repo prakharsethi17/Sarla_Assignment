@@ -160,6 +160,31 @@ The system is configured via `bin/config.json`:
 
 ## Build Instructions
 
+### Prerequisites
+Since **vcpkg** is used for dependency management, you must set it up first (it is not included in the source download).
+
+1.  **Clone vcpkg** (Run in the project root):
+    ```powershell
+    git clone https://github.com/microsoft/vcpkg.git
+    ```
+2.  **Bootstrap vcpkg**:
+    ```powershell
+    .\vcpkg\bootstrap-vcpkg.bat
+    ```
+
+3.  **Fetch CMake** (Portable):
+    ```powershell
+    .\vcpkg\vcpkg fetch cmake
+    ```
+    *This ensures a compatible version of CMake is available for the build script.*
+
+4.  **Install Dependencies**:
+    ```powershell
+    .\vcpkg\vcpkg install
+    ```
+    *This reads vcpkg.json and installs Boost, GTest, etc. This may take 5-10 minutes.*
+
+### Compilation
 Using **CMake** and **PowerShell**:
 
 1.  **Build**:

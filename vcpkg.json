@@ -1,0 +1,11 @@
+{
+  "name": "sarla-assignment",
+  "version-string": "1.0.0",
+  "dependencies": [
+    "boost-beast",
+    "boost-asio",
+    "nlohmann-json",
+    "gtest",
+    "fast-cpp-csv-parser"
+  ]
+}
