@@ -163,9 +163,12 @@ The system is configured via `bin/config.json`:
 Using **CMake** and **PowerShell**:
 
 1.  **Build**:
+    Open PowerShell as Administrator (or use the Bypass flag):
     ```powershell
-    .\build.ps1
+    powershell -ExecutionPolicy Bypass -File .\build.ps1
     ```
+    *If you see a security error, this is because Windows blocks downloaded scripts by default.*
+    
     This script will invoke CMake, use the vcpkg toolchain, compile all targets, and move executables to `bin/`.
 
 2.  **Run Tests**:
