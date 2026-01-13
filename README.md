@@ -1,9 +1,23 @@
 # Student Record Management System
 
+## Contribution Summary
+
+| Role | Details |
+| :--- | :--- |
+| **Architect** | Central Broker System Design, Performance Strategy (In-Memory Caching) |
+| **Analyst** | Library Benchmarking vs Manual Methods, Workflow Optimization |
+
+### Tools & Stack
+*   **Knowledge Base**: OpenAI ChatGPT
+*   **Code Generation**: Google Antigravity (Gemini 3 Pro) & Claude Sonnet 4.5
+*   **Total Effort**: ~5 Hours
+
 ## Overview
 This project implements a distributed **Student Record Management System** using C++17 and the **Central Broker** architectural pattern. The system is designed to demonstrate high-performance asynchronous networking, task scheduling, and coupled data processing. It consists of a Central Server (Broker), a Producer Node (Worker), and a Consumer Node (Client), all communicating via **WebSockets**.
 
 ## Architecture
+
+![System Architecture](System_Architecture.png)
 
 The system follows a star topology where the **Central Server** acts as the intermediary for all communications.
 
