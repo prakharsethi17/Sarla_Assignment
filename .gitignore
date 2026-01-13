@@ -1,32 +1,36 @@
-# Prerequisites
-*.d
-
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
+# --- Build Artifacts ---
+build/
+bin/
+obj/
+out/
+debug/
+release/
 *.exe
-*.out
-*.app
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.exp
+# --- Data ---
+# Keep students.csv? Typically input data is committed, but huge files are not.
+# Assuming students.csv is generated, ignored.
+data/*.csv
+data/history/
+!data/.gitkeep
+# --- IDE / Editors ---
+.vscode/
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln
+*.vcxproj
+*.vcxproj.filters
+# --- Dependences ---
+vcpkg/
+!vcpkg.json
+vcpkg_installed/
+*.log
+# --- System ---
+Thumbs.db
+Desktop.ini

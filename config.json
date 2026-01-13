@@ -1,0 +1,13 @@
+{
+    "server": {
+        "port": 9002
+    },
+    "producer": {
+        "host": "127.0.0.1",
+        "port": 9002
+    },
+    "consumer": {
+        "host": "127.0.0.1",
+        "port": 9002
+    }
+}
