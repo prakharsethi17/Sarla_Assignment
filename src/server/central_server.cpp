@@ -26,11 +26,17 @@ namespace net = boost::asio;
 using tcp = boost::asio::ip::tcp;
 using json = nlohmann::json;
 
+using TimePoint = std::chrono::time_point<std::chrono::system_clock>;
+
 // --- Data Structures ---
 struct Job {
     std::string id;
     std::string type; // "process"
     json params;      // { "count": 1000, "sort_by": "age" }
+    
+    // Timestamps
+    TimePoint receivedTime;
+    TimePoint dispatchedTime;
 };
 
 struct HistoryEntry {
@@ -46,8 +52,9 @@ std::mutex g_stateMutex;             // Protects History and Queue
 
 // Producer Management
 class Session; // Forward decl
-std::shared_ptr<Session> g_activeProducer = nullptr; // Simple ptr to active producer (single for now)
+std::shared_ptr<Session> g_activeProducer = nullptr; 
 bool g_producerBusy = false;
+Job g_currentRunningJob; // Track the job currently with the producer
 
 // Helpers
 std::string getCurrentTimestamp() {
@@ -56,6 +63,38 @@ std::string getCurrentTimestamp() {
     std::stringstream ss;
     ss << std::put_time(std::localtime(&in_time_t), "%Y%m%d_%H%M%S");
     return ss.str();
+}
+
+void printJobSummary(const Job& job, const json& stats, TimePoint endTime) {
+    auto queueDuration = std::chrono::duration_cast<std::chrono::microseconds>(job.dispatchedTime - job.receivedTime).count();
+    auto totalDuration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - job.receivedTime).count();
+    
+    // Producer Stats (in us)
+    long long parseTime = stats.value("parse_us", 0);
+    long long processTime = stats.value("process_us", 0);
+    long long producerTotal = parseTime + processTime;
+    
+    // Network + Overhead = Total - Queue - ProducerWork
+    long long overhead = totalDuration - queueDuration - producerTotal;
+    
+    std::cout << "\n";
+    std::cout << "================================================================================\n";
+    std::cout << "                              JOB EXECUTION REPORT                              \n";
+    std::cout << "================================================================================\n";
+    std::cout << std::left << std::setw(25) << "Job ID" << ": " << job.id << "\n";
+    std::cout << std::left << std::setw(25) << "Operation" << ": " << job.params.value("operation", "unknown") << "\n";
+    std::cout << std::left << std::setw(25) << "Records Processed" << ": " << stats.value("record_count", 0) << "\n";
+    std::cout << "--------------------------------------------------------------------------------\n";
+    std::cout << " [SERVER METRICS] \n";
+    std::cout << std::left << std::setw(25) << "Queue Wait Time" << ": " << queueDuration << " us\n";
+    std::cout << std::left << std::setw(25) << "Total Turnaround" << ": " << totalDuration << " us\n";
+    std::cout << std::left << std::setw(25) << "Est. Network Latency" << ": " << overhead << " us (Approx)\n";
+    std::cout << "--------------------------------------------------------------------------------\n";
+    std::cout << " [PRODUCER METRICS] \n";
+    std::cout << std::left << std::setw(25) << "Parse/Load Time" << ": " << parseTime << " us\n";
+    std::cout << std::left << std::setw(25) << "Processing Time" << ": " << processTime << " us\n";
+    std::cout << std::left << std::setw(25) << "Memory Usage" << ": " << stats.value("memory_bytes", 0) << " bytes\n";
+    std::cout << "================================================================================\n\n";
 }
 
 // --- WebSocket Session ---
@@ -113,8 +152,14 @@ public:
                 
             } else if (cmd == "upload") {
                 // Producer finished a job
-                std::cout << "[Server] Received Upload/Ack from Producer.\n";
+                auto finishTime = std::chrono::system_clock::now();
+                // std::cout << "[Server] Received Upload/Ack from Producer.\n";
                 
+                // PRINT REPORT
+                // We assume the upload corresponds to g_currentRunningJob
+                // Ideally we'd match IDs, but for single-worker FIFO, this is safe.
+                printJobSummary(g_currentRunningJob, j["payload"]["stats"], finishTime);
+
                 // Save Data
                 saveToHistory(j["payload"]);
                 
@@ -132,9 +177,10 @@ public:
                 std::cout << "[Server] Job Submitted by Consumer.\n";
                 
                 Job job;
-                job.id = getCurrentTimestamp(); // Simple ID
+                job.id = getCurrentTimestamp(); 
                 job.type = "process";
                 job.params = j["params"];
+                job.receivedTime = std::chrono::system_clock::now();
                 
                 {
                     std::lock_guard<std::mutex> lock(g_stateMutex);
@@ -185,11 +231,31 @@ public:
     }
     
     // Call with mutex held
-    void dispatch_job(const Job& job) {
+    void dispatch_job(Job& job) {
+        job.dispatchedTime = std::chrono::system_clock::now();
+        
+        // Track running
+        g_currentRunningJob = job; 
+
         json req;
-        req["command"] = "dispatch_job";
+        req["command"] = "dispatch_job"; // Always use dispatch_job even for generation
         req["params"] = job.params;
         do_write(req.dump());
+    }
+
+    // Call with mutex held
+    void dispatch_next_job_unsafe() {
+        if (g_activeProducer && !g_producerBusy && !g_jobQueue.empty()) {
+            // Get mutable reference to front to update dispatch time
+            // Actually queue.front() returns reference.
+            Job& job = g_jobQueue.front();
+            
+            g_producerBusy = true;
+            std::cout << "[Server] Dispatching Job " << job.id << " to Producer.\n";
+            g_activeProducer->dispatch_job(job); // Function will copy job to global runner
+            
+            g_jobQueue.pop(); // Remove from queue
+        }
     }
 
 private:
@@ -200,17 +266,6 @@ private:
                 g_activeProducer = nullptr;
                 std::cout << "[Server] Producer Disconnected.\n";
             }
-        }
-    }
-
-    void dispatch_next_job_unsafe() {
-        if (g_activeProducer && !g_producerBusy && !g_jobQueue.empty()) {
-            Job job = g_jobQueue.front();
-            g_jobQueue.pop();
-            
-            g_producerBusy = true;
-            std::cout << "[Server] Dispatching Job " << job.id << " to Producer.\n";
-            g_activeProducer->dispatch_job(job);
         }
     }
 
@@ -279,7 +334,7 @@ int main(int argc, char* argv[]) {
     // Load Config
     json conf = Config::load();
     int port = conf["server"]["port"];
-    if (argc > 1) port = std::stoi(argv[1]); // Override
+    if (argc > 1) port = std::stoi(argv[1]); 
 
     net::io_context ioc{1};
     std::make_shared<Listener>(ioc, tcp::endpoint{tcp::v4(), (unsigned short)port})->run();

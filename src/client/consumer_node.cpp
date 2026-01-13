@@ -48,8 +48,16 @@ void displayTable(const std::string& filename, const json& stats, const std::str
     std::cout << "============================================================\n";
     std::cout << std::left << std::setw(20) << "File Name" << ": " << filename << "\n";
     std::cout << std::left << std::setw(20) << "Records" << ": " << stats.value("record_count", 0) << "\n";
-    std::cout << std::left << std::setw(20) << "Parse Time" << ": " << stats.value("parse_ms", 0) << " ms\n";
-    std::cout << std::left << std::setw(20) << "Process Time" << ": " << stats.value("process_ms", 0) << " ms\n";
+    
+    // Check for us vs ms
+    if (stats.contains("parse_us")) {
+        std::cout << std::left << std::setw(20) << "Parse Time" << ": " << stats.value("parse_us", 0) << " us\n";
+        std::cout << std::left << std::setw(20) << "Process Time" << ": " << stats.value("process_us", 0) << " us\n";
+    } else {
+        std::cout << std::left << std::setw(20) << "Parse Time" << ": " << stats.value("parse_ms", 0) << " ms\n";
+        std::cout << std::left << std::setw(20) << "Process Time" << ": " << stats.value("process_ms", 0) << " ms\n";
+    }
+    
     std::cout << std::left << std::setw(20) << "Memory Usage" << ": " << stats.value("memory_bytes", 0) << " bytes\n";
     std::cout << "============================================================\n";
     if (content.length() > 200) {
@@ -69,9 +77,10 @@ int main() {
     
     while(true) {
         std::cout << "\n=== CONSUMER CONTROLLER ===\n";
-        std::cout << "1. Submit Job\n";
-        std::cout << "2. Review History (Download & View)\n";
-        std::cout << "3. Exit\n";
+        std::cout << "1. Submit Job (Process Data)\n";
+        std::cout << "2. Generate New Dataset\n"; // New option
+        std::cout << "3. Review History (Download & View)\n";
+        std::cout << "4. Exit\n";
         std::cout << "> ";
         
         int mainChoice;
@@ -121,7 +130,27 @@ int main() {
                 std::cout << "Server: " << resp.value("status", "unknown") << " (Job ID: " << resp.value("job_id", "?") << ")\n";
             } catch(std::exception const& e) { std::cerr << e.what() << "\n"; }
 
-        } else if (mainChoice == 2) {
+        } 
+        else if (mainChoice == 2) {
+            // GENERATE DATASET
+            std::cout << "Enter number of records to generate (e.g. 1000, 10000): ";
+            int count;
+            std::cin >> count;
+            
+            json req;
+            req["command"] = "submit_job";
+            req["params"] = {
+                {"operation", "generate"},
+                {"count", count}
+            };
+             std::cout << "Requesting Generation...\n";
+            try {
+                auto resp = sendCommand(serverHost, serverPort, req);
+                std::cout << "Server: " << resp.value("status", "unknown") << " (Job ID: " << resp.value("job_id", "?") << ")\n";
+                // Note: This relies on the Producer picking up the job and rewriting the file.
+            } catch(std::exception const& e) { std::cerr << e.what() << "\n"; }
+        }
+        else if (mainChoice == 3) {
             json req;
             req["command"] = "list_history";
             try {
@@ -129,32 +158,35 @@ int main() {
                 if (resp.contains("history")) {
                     std::vector<json> hist = resp["history"];
                     
-                    // Sort Descending by latest (Timestamp string comparison works for YYYYMMDD_HHMMSS)
+                    // Sort Recent First
                     std::sort(hist.begin(), hist.end(), [](const json& a, const json& b){
                         return a["timestamp"] > b["timestamp"];
                     });
                     
-                    std::cout << "\n--- HISTORY (Latest First) ---\n";
+                    std::cout << "\n--- RECENT HISTORY ---\n";
+                    int idx = 0;
+                    int maxItems = 10;
                     for(const auto& item : hist) {
-                        std::cout << " [" << item["timestamp"] << "] " << item["filename"] << "\n";
+                        idx++;
+                        if (idx > maxItems) break;
+                        std::cout << idx << ". " << item["timestamp"] << " | " << item["filename"] << "\n";
                     }
                     
-                    std::cout << "\nEnter Timestamp to Download (or '0' to back): ";
-                    std::string ts;
-                    std::cin >> ts;
+                    if (hist.empty()) {
+                        std::cout << "(No history found)\n";
+                        continue;
+                    }
                     
-                    if (ts != "0") {
-                        // Find stats for this TS to display table
+                    std::cout << "\nEnter Number to Download (1-" << std::min((int)hist.size(), maxItems) << ") or 0 to back: ";
+                    int sel;
+                    std::cin >> sel;
+                    
+                    if (sel > 0 && sel <= idx) {
+                        json targetItem = hist[sel-1];
+                        std::string ts = targetItem["timestamp"];
                         json targetStats;
-                        std::string targetFilename;
-                        for(const auto& item : hist) {
-                            if (item["timestamp"] == ts) {
-                                targetFilename = item["filename"];
-                                if(item["stats"].is_string()) targetStats = json::parse(item["stats"].get<std::string>()); 
-                                else targetStats = item["stats"];
-                                break;
-                            }
-                        }
+                        if(targetItem["stats"].is_string()) targetStats = json::parse(targetItem["stats"].get<std::string>()); 
+                        else targetStats = targetItem["stats"];
 
                         json dlReq;
                         dlReq["command"] = "download";
@@ -165,7 +197,7 @@ int main() {
                             std::string content = dlResp["file_content"];
                             std::ofstream out("data/final_output.csv");
                             out << content;
-                            displayTable(targetFilename, targetStats, content);
+                            displayTable(targetItem["filename"], targetStats, content);
                         } else {
                             std::cout << "Error Downloading.\n";
                         }

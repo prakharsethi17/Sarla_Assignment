@@ -17,6 +17,7 @@
 #include "Student.h"
 #include "CSVHandler.h"
 #include "DataOperations.h"
+#include "DataGenerator.h"
 
 namespace beast = boost::beast;
 namespace http = beast::http;
@@ -27,8 +28,8 @@ using json = nlohmann::json;
 
 // --- Stats ---
 struct ProcessStats {
-    long long parseTimeMs;
-    long long processTimeMs;
+    long long parseTimeUs;
+    long long processTimeUs;
     size_t memoryUsageBytes;
 };
 
@@ -45,7 +46,7 @@ size_t getMemoryUsage() {
 // --- Worker Client ---
 class WorkerClient : public std::enable_shared_from_this<WorkerClient> {
     websocket::stream<beast::tcp_stream> ws_;
-    tcp::resolver resolver_; // Keep alive
+    tcp::resolver resolver_; 
     beast::flat_buffer buffer_;
     std::string host_;
     std::string port_;
@@ -70,10 +71,8 @@ public:
 
     void on_handshake(beast::error_code ec) {
         if(ec) return fail(ec, "handshake");
-        
         std::cout << "[Producer] Connected to Server.\n";
         
-        // Register
         json reg;
         reg["command"] = "register_producer";
         do_write(reg.dump());
@@ -90,17 +89,39 @@ public:
         buffer_.consume(buffer_.size());
         
         handle_message(msg);
-        do_read(); // Loop
+        do_read(); 
     }
     
     void handle_message(const std::string& msg) {
         try {
             json j = json::parse(msg);
-            if (j.contains("command") && j["command"] == "dispatch_job") {
+            std::string cmd = j.value("command", "");
+            
+            if (cmd == "dispatch_job") {
                 std::cout << "[Producer] Received Job: " << j["params"].dump() << "\n";
                 process_job(j["params"]);
-            } else if (j.contains("status") && j["status"] == "registered") {
-                std::cout << "[Producer] Registration Confirmed. Waiting for jobs...\n";
+            } 
+            else if (cmd == "generate_data") {
+                int count = j.value("count", 1000);
+                std::cout << "[Producer] Generating " << count << " new records...\n";
+                DataGenerator::generate(count);
+                
+                // Reload Cache
+                g_cache = CSVHandler::readCSV("data/students.csv");
+                std::cout << "[Producer] Cache Reloaded with " << g_cache.size() << " records.\n";
+                
+                // Ack? Not strictly required by protocol but good for logs. 
+                // The server treats Producer as 'Busy' only during dispatch_job? 
+                // Actually, Server logic tracks busy state. If this was a job, we should respond.
+                // But generate_data is a custom command. 
+                // Currently Server dispatches "dispatch_job". 
+                // If Server relays "generate_data" as a job, we should treat it as one.
+                // Assuming 'dispatch_job' -> params: { operation: "generate", count: N } if we used that path.
+                // BUT, let's treat it as a direct command for now, OR better:
+                // Let's assume the Server dispatches a job `{ "operation": "generate", "count": N }`.
+            }
+            else if (j.contains("status") && j["status"] == "registered") {
+                std::cout << "[Producer] Registration Confirmed.\n";
             }
         } catch (...) {
             std::cerr << "Message Error.\n";
@@ -110,20 +131,35 @@ public:
     void process_job(json params) {
         ProcessStats stats = {0, 0, 0};
         
-        // 1. Parse/Cache
+        std::string operation = params.value("operation", "list");
+        
+        // --- Special Case: Generation ---
+        if (operation == "generate") {
+            int count = params.value("count", 1000);
+            DataGenerator::generate(count);
+            // Reload
+            auto t1 = std::chrono::high_resolution_clock::now();
+            g_cache = CSVHandler::readCSV("data/students.csv");
+            auto t2 = std::chrono::high_resolution_clock::now();
+            stats.parseTimeUs = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
+            
+            // Result is full list
+            upload_result(g_cache, stats);
+            return;
+        }
+
+        // 1. Check Cache
         auto t1 = std::chrono::high_resolution_clock::now();
         if (g_cache.empty()) {
              g_cache = CSVHandler::readCSV("data/students.csv");
         }
         auto t2 = std::chrono::high_resolution_clock::now();
-        stats.parseTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
+        stats.parseTimeUs = std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count();
         
         // 2. Process
-        std::vector<Student> workingData = g_cache; // Copy
+        std::vector<Student> workingData = g_cache; 
         std::vector<Student> resultData;
         auto t3 = std::chrono::high_resolution_clock::now();
-        
-        std::string operation = params.value("operation", "list");
         
         if (operation == "list") {
             resultData = workingData;
@@ -148,31 +184,32 @@ public:
             std::string field = params.value("field", "id");
             std::string orderStr = params.value("order", "asc");
             SortOrder order = (orderStr == "desc") ? SortOrder::DESC : SortOrder::ASC;
-            
             SortField sField = SortField::ID;
             if (field == "name") sField = SortField::NAME;
             else if (field == "age") sField = SortField::AGE;
             else if (field == "grade") sField = SortField::GRADE;
-            
             DataOperations::sortStudents(workingData, sField, order);
             resultData = workingData;
         }
 
         auto t4 = std::chrono::high_resolution_clock::now();
-        stats.processTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(t4 - t3).count();
+        stats.processTimeUs = std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count();
         stats.memoryUsageBytes = getMemoryUsage();
         
-        // 3. Upload Result
+        upload_result(resultData, stats);
+    }
+    
+    void upload_result(const std::vector<Student>& data, ProcessStats stats) {
         json uploadPayload;
         uploadPayload["stats"] = {
-            {"parse_ms", stats.parseTimeMs}, 
-            {"process_ms", stats.processTimeMs}, 
+            {"parse_us", stats.parseTimeUs}, 
+            {"process_us", stats.processTimeUs}, 
             {"memory_bytes", stats.memoryUsageBytes},
-            {"record_count", resultData.size()}
+            {"record_count", data.size()}
         };
         
         json dataArr = json::array();
-        for(const auto& s : resultData) {
+        for(const auto& s : data) {
             dataArr.push_back({{"id", s.id}, {"name", s.name}, {"age", s.age}, {"grade", s.grade}});
         }
         uploadPayload["data"] = dataArr;
@@ -181,7 +218,7 @@ public:
         response["command"] = "upload";
         response["payload"] = uploadPayload;
         
-        std::cout << "[Producer] Job processed (" << resultData.size() << " records). Uploading...\n";
+        std::cout << "[Producer] Job processed. Sending " << data.size() << " records.\n";
         do_write(response.dump());
     }
 
@@ -200,7 +237,6 @@ public:
 #include "../common/Config.h"
 
 int main(int argc, char* argv[]) {
-    // Load Config
     json conf = Config::load();
     std::string host = conf["producer"]["host"];
     int port = conf["producer"]["port"];
@@ -208,7 +244,7 @@ int main(int argc, char* argv[]) {
     // Preload
     try {
         g_cache = CSVHandler::readCSV("data/students.csv");
-        std::cout << "[Producer] Cache Ready.\n";
+        std::cout << "[Producer] Cache Ready. Loaded " << g_cache.size() << " records.\n";
     } catch(...) {}
 
     net::io_context ioc;
