@@ -65,6 +65,60 @@ The project relies on industry-standard C++ libraries managed via **vcpkg**.
 | **GoogleTest** | 1.14+ | Unit testing framework for core logic verification. |
 | **fast-cpp-csv-parser** | Latest | High-performance CSV parsing library. |
 
+## Algorithm Implementation Details
+
+The system employs standard C++ STL algorithms to ensure correctness and portability.
+
+### 1. Sorting Algorithms
+*   **Implementation**: `std::sort` (from `<algorithm>` header).
+*   **Algorithm**: **Introsort** (Introspective Sort). It begins with Quicksort and switches to Heapsort if recursion depth usually exceeds a level based on the number of elements being sorted.
+*   **Time Complexity**: `O(N log N)` (Wait-free, Average, and Worst-Case).
+*   **Space Complexity**: `O(log N)` stack space.
+*   **Usage**: Used for sorting by ID, Name, Age, or Grade.
+
+### 2. Search Algorithms
+*   **Implementation**: Linear Search (Iterative scan).
+*   **Algorithm**: Iterates through the `std::vector<Student>` and compares the target field (ID, Name, Age, or Grade).
+*   **Time Complexity**: `O(N)` (Linear time).
+*   **Rationale**: Since the dataset is dynamic and can be re-sorted by arbitrary fields, a binary search `O(log N)` is only possible if we maintain multiple sorted indices, which would increase memory overhead. Given the in-memory speed (microseconds), a linear scan is sufficient for datasets < 1M records.
+
+### 3. List Operation
+*   **Implementation**: Linear Traversal.
+*   **Complexity**: `O(N)`.
+
+## Test Suite
+
+The project uses **GoogleTest** to verify the correctness of the core data manipulation algorithms.
+
+| Test Case | Utility | Verified Logic |
+| :--- | :--- | :--- |
+| `SortByAgeAscending` | Correctness | Verifies `std::sort` correctly orders integers in ascending order. |
+| `SortByGradeDescending` | Correctness | Verifies `std::sort` correctly orders integers in descending order. |
+| `SearchById` | Data Integrity | Ensures exact matching of unique IDs returns the correct record. |
+| `SearchByAge` | Filtering | Ensures search returns *all* records matching the criteria (vector size check). |
+| `ListStudentsSmokeTest` | Stability | Verifies that iterating and printing the dataset does not crash the application. |
+
+## Known Issues & Limitations
+
+1.  **Memory Constraint (RAM)**:
+    *   **Issue**: The Producer caches the *entire* dataset in heap memory.
+    *   **Limitation**: The system cannot handle datasets larger than available physical RAM (e.g., multi-gigabyte CSVs would cause swapping or OOM).
+    *   **Mitigation**: Paging or database integration would be required for "Big Data".
+
+2.  **Single Point of Failure (SPOF)**:
+    *   **Issue**: The **Central Server** is a singleton broker.
+    *   **Limitation**: If the Server process crashes, the Producer and Consumer lose connectivity and the system halts.
+    *   **Mitigation**: Standard distributed systems would use a replicated broker (e.g., Kafka) or leader election.
+
+3.  **Sequential Processing**:
+    *   **Issue**: The current Producer handles one job at a time (Single Threaded `dispatch_job`).
+    *   **Limitation**: High throughput of small jobs might suffer from Head-of-Line blocking.
+    *   **Mitigation**: The Producer could be enhanced to use a thread pool for parallel processing of read-only queries (Search).
+
+4.  **Ephemeral State**:
+    *   **Issue**: The internal Queue is in-memory.
+    *   **Limitation**: If the Server restarts, pending jobs are lost.
+
 ## Process Workflow
 
 ### 1. System Startup
