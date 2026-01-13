@@ -51,7 +51,7 @@ This optimization shifts the performance magnitude from **Milliseconds (ms)** to
 *   **Without Cache**: Search might take ~2-5 ms per request.
 *   **With Cache**: Search takes ~10-50 **us** (microseconds).
 
-This demonstrates the trade-off of **Higher Memory Usage** for **Extreme Speed**, a standard pattern in high-frequency trading and real-time analytics systems.
+This demonstrates the trade-off of **Higher Memory Usage** for **Extreme Speed**.
 
 ## Dependencies
 
