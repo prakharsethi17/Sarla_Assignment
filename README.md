@@ -97,6 +97,17 @@ The project uses **GoogleTest** to verify the correctness of the core data manip
 | `SearchById` | Data Integrity | Ensures exact matching of unique IDs returns the correct record. |
 | `SearchByAge` | Filtering | Ensures search returns *all* records matching the criteria (vector size check). |
 | `ListStudentsSmokeTest` | Stability | Verifies that iterating and printing the dataset does not crash the application. |
+| **Network Round Trip** | `~300 - 500 us` | Localhost loopback overhead (WebSocket framing + TCP). |
+
+### Visual Proof
+
+**1. Data Generation Report**
+*Shows 10,000 records generated and cached in ~12ms (Load Time).*
+![Data Generation metrics](data_gen_report.png)
+
+**2. Sort Performance**
+*Shows in-memory sorting of 10,000 records in < 2ms.*
+![Sort Performance Metrics](Sort_Performance.png)
 
 ## Known Issues & Limitations
 
